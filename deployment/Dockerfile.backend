@@ -1,0 +1,201 @@
+# 使用官方 Python 运行时作为父镜像
+FROM python:3.11-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ \
+    HF_ENDPOINT=https://hf-mirror.com
+
+# 构建参数
+ARG PYPI_MIRROR=https://mirrors.aliyun.com/pypi/simple/
+
+# ✅ 优化 1: 添加阿里云镜像源（不覆盖原有源，避免包冲突）
+# 注意：不要完全替换 sources.list，以免版本不匹配
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
+
+# ✅ 优化 2: 最小化安装依赖，只安装必需的工具
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # 基础工具
+    curl \
+    wget \
+    gnupg \
+    ca-certificates \
+    # FFmpeg (替代 static_ffmpeg，避免从 GitHub 下载)
+    ffmpeg \
+    # Selenium 支持
+    chromium \
+    chromium-driver \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制 requirements.txt
+COPY requirements.txt .
+
+# ✅ 优化 3: 使用国内 pip 镜像源安装 Python 依赖
+# 配置pip超时和重试,使用更长的超时时间
+RUN pip config set global.timeout 1200 && \
+    pip config set global.retries 10 && \
+    pip config set global.index-url ${PYPI_MIRROR} && \
+    pip install --upgrade pip "setuptools<70" wheel
+
+# 第一批: 安装基础依赖(小包)
+RUN pip install --no-cache-dir -i ${PYPI_MIRROR} \
+    --default-timeout=1200 \
+    --retries=10 \
+    fastapi==0.104.1 \
+    uvicorn[standard]==0.24.0 \
+    pymongo==4.6.0 \
+    motor==3.3.2 \
+    python-multipart==0.0.6 \
+    python-jose[cryptography]==3.3.0 \
+    passlib[bcrypt]==1.7.4 \
+    python-dotenv==1.0.0 \
+    pydantic==2.5.0 \
+    pydantic-settings==2.1.0 \
+    email-validator==2.1.0 \
+    aiofiles==23.2.1 \
+    bcrypt==4.0.1 \
+    psutil==5.9.6
+
+# 第二批: 安装文档处理相关依赖
+RUN pip install --no-cache-dir -i ${PYPI_MIRROR} \
+    --default-timeout=1200 \
+    --retries=10 \
+    pillow==10.1.0 \
+    python-docx==1.1.0 \
+    openpyxl==3.1.2 \
+    PyPDF2==3.0.1 \
+    OpenCC==1.1.9 \
+    Jinja2==3.1.2 \
+    python-pptx==0.6.23
+
+# 第三批: 安装网络请求相关依赖
+RUN pip install --no-cache-dir -i ${PYPI_MIRROR} \
+    --default-timeout=1200 \
+    --retries=10 \
+    httpx==0.25.2 \
+    requests==2.31.0
+
+# 第四批: 安装浏览器自动化依赖及云存储SDK(较大)
+RUN pip install --no-cache-dir -i ${PYPI_MIRROR} \
+    --default-timeout=1200 \
+    --retries=10 \
+    av==12.3.0 \
+    playwright==1.40.0 \
+    selenium==4.15.2 \
+    webdriver-manager==4.0.1 \
+    oss2==2.18.4 \
+    cos-python-sdk-v5==1.9.30
+
+# 第五批：安装特殊的 AI 运行库（强制 CPU 版以节省空间和时间）
+# 这一步非常重要，如果不先安装 CPU 版，whisper 会默认下载好几 GB 的 CUDA 显卡库
+RUN pip install --no-cache-dir \
+    --default-timeout=1200 \
+    -i https://download.pytorch.org/whl/cpu \
+    torch==2.1.0+cpu \
+    torchaudio==2.1.0+cpu
+
+# 第六批: 安装 AI 相关依赖(已预装了 CPU 版 torch，所以这里会很快)
+RUN pip install --no-cache-dir \
+    --default-timeout=1800 \
+    --retries=15 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    faster-whisper==1.0.3 || \
+    pip install --no-cache-dir \
+    --default-timeout=1800 \
+    --retries=15 \
+    -i ${PYPI_MIRROR} \
+    faster-whisper==1.0.3
+
+# 第七批: 安装 openai-whisper(备用方案)
+RUN pip install --no-cache-dir --no-build-isolation \
+    --default-timeout=1800 \
+    --retries=15 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    openai-whisper==20231117 || \
+    pip install --no-cache-dir --no-build-isolation \
+    --default-timeout=1800 \
+    --retries=15 \
+    -i ${PYPI_MIRROR} \
+    openai-whisper==20231117
+
+# ✅ 优化: 最终检查 requirements.txt 以确保没有遗漏
+# 这一步通常在前面由于有缓存,会非常快,但能保证以后修改 requirements.txt 后能自动安装新包
+RUN pip install --no-cache-dir -r requirements.txt
+
+# ✅ 优化 4: 安装 Playwright 浏览器和依赖
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# 先安装 Playwright 浏览器
+RUN playwright install chromium
+
+# 手动安装 Playwright 所需的系统依赖(避免 Debian Trixie 字体包兼容性问题)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # 浏览器运行时依赖
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libdbus-1-3 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2 \
+    libatspi2.0-0 \
+    # 字体支持(使用 Debian Trixie 兼容的包名)
+    fonts-liberation \
+    fonts-noto-color-emoji \
+    fonts-unifont \
+    # 其他依赖
+    xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制项目文件
+COPY . .
+
+# ✅ 优化 5: 预下载 Whisper 模型(避免首次使用时下载)
+# 这样容器启动后就可以直接使用,不需要等待模型下载
+RUN python3 -c "\
+import os; \
+os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'; \
+print('开始预下载 Faster-Whisper 模型...'); \
+try: \
+    from faster_whisper import WhisperModel; \
+    model = WhisperModel('small', device='cpu', compute_type='int8'); \
+    print('✓ Faster-Whisper small 模型下载完成'); \
+except Exception as e: \
+    print(f'⚠ Faster-Whisper 模型下载失败: {e}'); \
+    print('将在运行时降级使用原版 Whisper'); \
+try: \
+    import whisper; \
+    whisper.load_model('small'); \
+    print('✓ OpenAI-Whisper small 模型下载完成'); \
+except Exception as e: \
+    print(f'⚠ OpenAI-Whisper 模型下载失败: {e}'); \
+" || echo "模型预下载失败,将在运行时下载"
+
+# 创建必要的目录
+RUN mkdir -p uploads logs
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查脚本
+RUN echo '#!/bin/sh\ncurl -f http://localhost:8000/api/health || exit 1' > /healthcheck.sh && \
+    chmod +x /healthcheck.sh
+
+# 启动应用
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

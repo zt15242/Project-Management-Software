@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>测试后端API</title>
+</head>
+<body>
+    <h1>后端API测试</h1>
+    
+    <h2>1. 测试根路径</h2>
+    <button onclick="testRoot()">测试 GET /</button>
+    <pre id="root-result"></pre>
+    
+    <h2>2. 测试健康检查</h2>
+    <button onclick="testHealth()">测试 GET /health</button>
+    <pre id="health-result"></pre>
+    
+    <h2>3. 测试注册接口</h2>
+    <button onclick="testRegister()">测试 POST /api/auth/register</button>
+    <pre id="register-result"></pre>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        async function testRoot() {
+            const result = document.getElementById('root-result');
+            try {
+                const response = await fetch(`${API_BASE}/`);
+                const data = await response.json();
+                result.textContent = JSON.stringify(data, null, 2);
+                result.style.color = 'green';
+            } catch (error) {
+                result.textContent = 'Error: ' + error.message;
+                result.style.color = 'red';
+            }
+        }
+
+        async function testHealth() {
+            const result = document.getElementById('health-result');
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                result.textContent = JSON.stringify(data, null, 2);
+                result.style.color = 'green';
+            } catch (error) {
+                result.textContent = 'Error: ' + error.message;
+                result.style.color = 'red';
+            }
+        }
+
+        async function testRegister() {
+            const result = document.getElementById('register-result');
+            try {
+                const response = await fetch(`${API_BASE}/api/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        username: 'testuser_' + Date.now(),
+                        email: 'test' + Date.now() + '@example.com',
+                        password: '123456',
+                        full_name: '测试用户',
+                        role: 'developer'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    result.textContent = 'Success!\n' + JSON.stringify(data, null, 2);
+                    result.style.color = 'green';
+                } else {
+                    result.textContent = `Error ${response.status}:\n` + JSON.stringify(data, null, 2);
+                    result.style.color = 'red';
+                }
+            } catch (error) {
+                result.textContent = 'Error: ' + error.message;
+                result.style.color = 'red';
+            }
+        }
+    </script>
+</body>
+</html>
+
