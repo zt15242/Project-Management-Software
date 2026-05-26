@@ -1,195 +1,351 @@
-# 项目管理系统 PowerShell 部署脚本
-# 使用方法: .\deploy.ps1 [start|stop|restart|logs|build|clean|backup|restore]
+# ============================================================
+# 自动部署脚本 - Windows Server 版本
+# 用途: Git pull -> 备份 -> 重新构建 -> 健康检查 -> 失败回滚
+# ============================================================
 
-param (
-    [Parameter(Position=0)]
-    [ValidateSet("start", "stop", "restart", "logs", "build", "status", "clean", "backup", "restore", "help")]
-    [string]$Command = "help",
-
-    [Parameter(Position=1)]
-    [string]$Target = ""
+param(
+    [string]$ProjectRoot = "D:\Project_Package_20260304_1520",
+    [string]$Branch = "main",
+    [int]$BackendPort = 6002,
+    [int]$FrontendPort = 6004,
+    [int]$HealthCheckTimeout = 60,
+    [switch]$SkipBackup = $false,
+    [switch]$SkipFrontendBuild = $false
 )
 
-# 设置编码
-$OutputEncoding = [System.Text.Encoding]::UTF8
+# 错误时停止
+$ErrorActionPreference = "Stop"
 
-# 获取脚本所在目录
-$SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+# ============== 配置 ==============
+$DeploymentDir = Join-Path $ProjectRoot "deployment"
+$BackupRoot = Join-Path $ProjectRoot "..\_deploy_backups"
+$LogDir = Join-Path $ProjectRoot "..\_deploy_logs"
+$Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogFile = Join-Path $LogDir "deploy_$Timestamp.log"
 
-function Write-Host-Color {
-    param($Message, $Color = "White")
-    Write-Host $Message -ForegroundColor $Color
+# ============== 工具函数 ==============
+function Write-Log {
+    param([string]$Message, [string]$Level = "INFO")
+    $LogMessage = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$Level] $Message"
+    Write-Host $LogMessage
+    Add-Content -Path $LogFile -Value $LogMessage -Encoding UTF8
 }
 
-function Check-Requirements {
-    Write-Host-Color "检查系统要求..." "Yellow"
-    
-    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-        Write-Host-Color "错误: Docker 未安装，请先安装 Docker Desktop for Windows" "Red"
-        exit 1
-    }
-    
-    $composeVersion = docker compose version 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host-Color "错误: Docker Compose 未安装" "Red"
-        exit 1
-    }
-    
-    Write-Host-Color "✓ Docker 和 Docker Compose 已安装" "Green"
-}
-
-function Check-EnvFile {
-    $envPath = Join-Path $SCRIPT_DIR ".env"
-    $prodPath = Join-Path $SCRIPT_DIR ".env.production"
-    
-    if (-not (Test-Path $envPath)) {
-        if (Test-Path $prodPath) {
-            Write-Host-Color "警告: .env 文件不存在，复制 .env.production 使用默认配置" "Yellow"
-            Copy-Item $prodPath $envPath
-            Write-Host-Color "✓ 环境配置已加载" "Green"
-        } else {
-            Write-Host-Color "警告: 未找到 .env 或 .env.production 文件" "Yellow"
+function Test-HealthCheck {
+    param([string]$Url, [int]$TimeoutSeconds = 60)
+    $StartTime = Get-Date
+    while (((Get-Date) - $StartTime).TotalSeconds -lt $TimeoutSeconds) {
+        try {
+            $Response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            if ($Response.StatusCode -eq 200) {
+                return $true
+            }
+        } catch {
+            Start-Sleep -Seconds 3
         }
     }
+    return $false
 }
 
-function Build-Images {
-    Check-Requirements
-    Check-EnvFile
-    Write-Host-Color "开始构建 Docker 镜像..." "Yellow"
-    
-    $env:DOCKER_BUILDKIT = 1
-    Set-Location $SCRIPT_DIR
-    docker compose build
-    
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host-Color "✓ Docker 镜像构建完成" "Green"
-    } else {
-        Write-Host-Color "错误: 构建失败" "Red"
-        exit 1
+function Invoke-CommandWithLog {
+    param([string]$Command, [string]$WorkDir = $PWD)
+    Write-Log "执行: $Command (工作目录: $WorkDir)"
+    Push-Location $WorkDir
+    try {
+        $Output = Invoke-Expression $Command 2>&1
+        $Output | ForEach-Object { Write-Log "  $_" }
+        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
+            throw "命令执行失败，退出码: $LASTEXITCODE"
+        }
+        return $Output
+    } finally {
+        Pop-Location
     }
 }
 
-function Start-Services {
-    Check-Requirements
-    Check-EnvFile
-    Write-Host-Color "启动服务..." "Yellow"
-    
-    Set-Location $SCRIPT_DIR
-    
-    # 创建必要的目录
-    $dataDirs = @("data/uploads", "data/logs")
-    foreach ($dir in $dataDirs) {
-        $fullPath = Join-Path $SCRIPT_DIR $dir
-        if (-not (Test-Path $fullPath)) {
-            New-Item -ItemType Directory -Force -Path $fullPath | Out-Null
+# ============== 准备工作 ==============
+# 创建必要目录
+foreach ($Dir in @($BackupRoot, $LogDir)) {
+    if (-not (Test-Path $Dir)) {
+        New-Item -ItemType Directory -Path $Dir -Force | Out-Null
+    }
+}
+
+Write-Log "============================================================"
+Write-Log "开始部署 - 项目目录: $ProjectRoot"
+Write-Log "============================================================"
+
+# 检查项目目录
+if (-not (Test-Path $ProjectRoot)) {
+    Write-Log "项目目录不存在: $ProjectRoot" "ERROR"
+    exit 1
+}
+
+# 检查是否为 git 仓库
+if (-not (Test-Path (Join-Path $ProjectRoot ".git"))) {
+    Write-Log "不是 git 仓库，请先运行 migrate-to-git.ps1 进行迁移" "ERROR"
+    exit 1
+}
+
+# 检查 docker
+try {
+    $null = docker --version
+} catch {
+    Write-Log "Docker 未安装或未运行" "ERROR"
+    exit 1
+}
+
+# ============== 1. 记录当前版本 ==============
+Push-Location $ProjectRoot
+try {
+    $CurrentCommit = git rev-parse HEAD
+    $CurrentBranch = git rev-parse --abbrev-ref HEAD
+    Write-Log "当前分支: $CurrentBranch"
+    Write-Log "当前提交: $CurrentCommit"
+} finally {
+    Pop-Location
+}
+
+# ============== 2. 备份 ==============
+$BackupDir = $null
+if (-not $SkipBackup) {
+    Write-Log "------------------------------------------------------------"
+    Write-Log "[1/6] 备份当前版本"
+    Write-Log "------------------------------------------------------------"
+
+    $BackupDir = Join-Path $BackupRoot "backup_$Timestamp"
+    New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+
+    # 备份提交哈希（用于回滚）
+    $CurrentCommit | Out-File -FilePath (Join-Path $BackupDir "commit.txt") -Encoding UTF8
+
+    # 备份 docker 镜像 tag（保留当前镜像作为 backup tag）
+    Write-Log "标记当前 Docker 镜像为 backup..."
+    try {
+        docker tag deployment-backend:latest "deployment-backend:backup_$Timestamp" 2>&1 | Out-Null
+        docker tag deployment-frontend:latest "deployment-frontend:backup_$Timestamp" 2>&1 | Out-Null
+        Write-Log "  镜像备份完成: backup_$Timestamp"
+    } catch {
+        Write-Log "  镜像备份失败（首次部署可忽略）: $_" "WARN"
+    }
+
+    # 备份 MongoDB（如果 mongo-1 容器存在）
+    $MongoContainer = docker ps -a --filter "name=mongo-1" --format "{{.Names}}" 2>$null
+    if ($MongoContainer -eq "mongo-1") {
+        Write-Log "备份 MongoDB 数据..."
+        try {
+            $MongoBackupDir = Join-Path $BackupDir "mongodb"
+            New-Item -ItemType Directory -Path $MongoBackupDir -Force | Out-Null
+            docker exec mongo-1 mongodump --out /tmp/backup_$Timestamp 2>&1 | Out-Null
+            docker cp "mongo-1:/tmp/backup_$Timestamp" "$MongoBackupDir" 2>&1 | Out-Null
+            docker exec mongo-1 rm -rf "/tmp/backup_$Timestamp" 2>&1 | Out-Null
+            Write-Log "  MongoDB 备份完成"
+        } catch {
+            Write-Log "  MongoDB 备份失败: $_" "WARN"
         }
     }
-    
-    docker compose up -d
-    
-    Write-Host-Color "✓ 服务启动成功" "Green"
-    Write-Host-Color "`n服务访问地址:" "Green"
-    Write-Host-Color "  - 前端: http://localhost:6004" "Green"
-    Write-Host-Color "  - 后端 API: http://localhost:6002" "Green"
-    Write-Host-Color "  - API 文档: http://localhost:6002/docs" "Green"
-    Write-Host-Color "  - MongoDB: External (External Database Specified)" "Green"
+
+    Write-Log "备份位置: $BackupDir"
+} else {
+    Write-Log "[1/6] 跳过备份" "WARN"
 }
 
-function Stop-Services {
-    Write-Host-Color "停止服务..." "Yellow"
-    Set-Location $SCRIPT_DIR
-    docker compose down
-    Write-Host-Color "✓ 服务已停止" "Green"
+# ============== 3. 拉取最新代码 ==============
+Write-Log "------------------------------------------------------------"
+Write-Log "[2/6] 拉取最新代码"
+Write-Log "------------------------------------------------------------"
+
+Push-Location $ProjectRoot
+try {
+    Invoke-CommandWithLog "git fetch --all"
+    Invoke-CommandWithLog "git reset --hard origin/$Branch"
+
+    $NewCommit = git rev-parse HEAD
+    Write-Log "最新提交: $NewCommit"
+
+    if ($CurrentCommit -eq $NewCommit) {
+        Write-Log "代码无更新，跳过部署"
+        exit 0
+    }
+
+    # 显示变更摘要
+    $ChangedFiles = git diff --name-only $CurrentCommit $NewCommit
+    Write-Log "变更文件数: $($ChangedFiles.Count)"
+    $ChangedFiles | Select-Object -First 20 | ForEach-Object { Write-Log "  - $_" }
+    if ($ChangedFiles.Count -gt 20) {
+        Write-Log "  ... 还有 $($ChangedFiles.Count - 20) 个文件"
+    }
+
+    # 检查关键配置变更
+    $CriticalChanges = @()
+    if ($ChangedFiles -match "deployment[/\\]docker-compose\.yml") {
+        $CriticalChanges += "docker-compose.yml"
+    }
+    if ($ChangedFiles -match "deployment[/\\]Dockerfile") {
+        $CriticalChanges += "Dockerfile"
+    }
+    if ($ChangedFiles -match "backend[/\\]requirements\.txt") {
+        $CriticalChanges += "requirements.txt（后端依赖）"
+    }
+    if ($ChangedFiles -match "frontend[/\\]package\.json") {
+        $CriticalChanges += "package.json（前端依赖）"
+    }
+    if ($CriticalChanges.Count -gt 0) {
+        Write-Log "检测到关键配置变更: $($CriticalChanges -join ', ')" "WARN"
+    }
+} finally {
+    Pop-Location
 }
 
-function Restart-Services {
-    Stop-Services
-    Start-Services
+# ============== 4. 判断是否需要重建镜像 ==============
+$NeedRebuildBackend = $false
+$NeedRebuildFrontend = $false
+
+if ($ChangedFiles -match "backend[/\\]requirements\.txt|deployment[/\\]Dockerfile\.backend") {
+    $NeedRebuildBackend = $true
+}
+# 后端代码是 bind mount，改 .py 文件不需要重建，但需要重启容器
+$BackendCodeChanged = $ChangedFiles -match "backend[/\\].*\.py"
+
+if ($ChangedFiles -match "frontend[/\\]") {
+    $NeedRebuildFrontend = $true
 }
 
-function View-Logs {
-    Set-Location $SCRIPT_DIR
-    if ($Target) {
-        docker compose logs -f $Target
+if ($SkipFrontendBuild) {
+    $NeedRebuildFrontend = $false
+    Write-Log "跳过前端构建（参数指定）"
+}
+
+# ============== 5. 构建镜像 ==============
+Write-Log "------------------------------------------------------------"
+Write-Log "[3/6] 构建镜像"
+Write-Log "------------------------------------------------------------"
+
+Push-Location $DeploymentDir
+try {
+    if ($NeedRebuildBackend) {
+        Write-Log "重新构建后端镜像（依赖有变更）..."
+        Invoke-CommandWithLog "docker-compose build backend"
     } else {
-        docker compose logs -f
+        Write-Log "后端镜像无需重建（代码通过 bind mount 挂载）"
     }
-}
 
-function Show-Status {
-    Write-Host-Color "服务状态:" "Yellow"
-    Set-Location $SCRIPT_DIR
-    docker compose ps
-}
-
-function Clean-Resources {
-    Write-Host-Color "清理 Docker 资源..." "Yellow"
-    $confirm = Read-Host "这将删除所有容器、镜像和卷，确定要继续吗？(y/N)"
-    if ($confirm -eq "y" -or $confirm -eq "Y") {
-        Set-Location $SCRIPT_DIR
-        docker compose down -v --rmi all
-        Write-Host-Color "✓ 资源清理完成" "Green"
+    if ($NeedRebuildFrontend) {
+        Write-Log "重新构建前端镜像..."
+        Invoke-CommandWithLog "docker-compose build frontend"
     } else {
-        Write-Host-Color "取消清理操作" "Yellow"
+        Write-Log "前端无变更，跳过构建"
     }
+} finally {
+    Pop-Location
 }
 
-function Backup-Data {
-    Write-Host-Color "备份数据库..." "Yellow"
-    
-    $projectRoot = Split-Path $SCRIPT_DIR -Parent
-    $backupDir = Join-Path $projectRoot "backups"
-    
-    if (-not (Test-Path $backupDir)) {
-        New-Item -ItemType Directory -Path $backupDir | Out-Null
+# ============== 6. 重启容器 ==============
+Write-Log "------------------------------------------------------------"
+Write-Log "[4/6] 重启容器"
+Write-Log "------------------------------------------------------------"
+
+Push-Location $DeploymentDir
+try {
+    if ($NeedRebuildFrontend -or $NeedRebuildBackend) {
+        # 完整重启
+        Invoke-CommandWithLog "docker-compose up -d"
+    } elseif ($BackendCodeChanged) {
+        # 后端代码变更，只重启后端容器（让 Python 重新加载）
+        Write-Log "重启后端容器以加载新代码..."
+        Invoke-CommandWithLog "docker-compose restart backend"
+    } else {
+        Write-Log "无需重启容器"
     }
-    
-    Write-Host-Color "警告: 外部 MongoDB 模式下，此脚本不支持自动备份。请手动备份您的本地数据库。" "Yellow"
+} finally {
+    Pop-Location
 }
 
-function Restore-Data {
-    if (-not $Target) {
-        Write-Host-Color "错误: 请指定备份文件路径" "Red"
-        Write-Host-Color "用法: .\deploy.ps1 restore <backup_file>" "Yellow"
-        return
+# ============== 7. 健康检查 ==============
+Write-Log "------------------------------------------------------------"
+Write-Log "[5/6] 健康检查"
+Write-Log "------------------------------------------------------------"
+
+Start-Sleep -Seconds 5  # 等待服务启动
+
+$BackendHealthy = $false
+$FrontendHealthy = $false
+
+Write-Log "检查后端 http://localhost:$BackendPort/health ..."
+$BackendHealthy = Test-HealthCheck -Url "http://localhost:$BackendPort/health" -TimeoutSeconds $HealthCheckTimeout
+if ($BackendHealthy) {
+    Write-Log "  后端健康"
+} else {
+    Write-Log "  后端不健康！" "ERROR"
+}
+
+Write-Log "检查前端 http://localhost:$FrontendPort ..."
+$FrontendHealthy = Test-HealthCheck -Url "http://localhost:$FrontendPort" -TimeoutSeconds 30
+if ($FrontendHealthy) {
+    Write-Log "  前端健康"
+} else {
+    Write-Log "  前端不健康！" "ERROR"
+}
+
+# ============== 8. 部署结果处理 ==============
+Write-Log "------------------------------------------------------------"
+Write-Log "[6/6] 部署结果"
+Write-Log "------------------------------------------------------------"
+
+if ($BackendHealthy -and $FrontendHealthy) {
+    Write-Log "============================================================"
+    Write-Log "部署成功！"
+    Write-Log "  分支: $Branch"
+    Write-Log "  从: $CurrentCommit"
+    Write-Log "  到: $NewCommit"
+    Write-Log "============================================================"
+
+    # 清理超过 30 天的备份
+    Write-Log "清理过期备份（保留最近 30 天）..."
+    Get-ChildItem $BackupRoot -Directory -Filter "backup_*" |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-30) } |
+        ForEach-Object {
+            Write-Log "  删除: $($_.Name)"
+            Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+    # 清理无标签的镜像
+    docker image prune -f 2>&1 | Out-Null
+
+    exit 0
+} else {
+    Write-Log "============================================================" "ERROR"
+    Write-Log "健康检查失败，开始自动回滚..." "ERROR"
+    Write-Log "============================================================" "ERROR"
+
+    # 回滚 git
+    Push-Location $ProjectRoot
+    try {
+        Invoke-CommandWithLog "git reset --hard $CurrentCommit"
+    } finally {
+        Pop-Location
     }
-    
-    Write-Host-Color "恢复数据库..." "Yellow"
-    Write-Host-Color "警告: 外部 MongoDB 模式下，此脚本不支持自动恢复。请手动恢复您的本地数据库。" "Yellow"
-}
 
-function Show-Help {
-    Write-Host-Color "`n项目管理系统 PowerShell 部署脚本" "Cyan"
-    Write-Host "用法: .\deploy.ps1 [命令] [选项]"
-    Write-Host "`n命令:"
-    Write-Host "  build       构建 Docker 镜像"
-    Write-Host "  start       启动所有服务"
-    Write-Host "  stop        停止所有服务"
-    Write-Host "  restart     重启所有服务"
-    Write-Host "  status      显示服务状态"
-    Write-Host "  logs        查看日志 (可选: .\deploy.ps1 logs backend)"
-    Write-Host "  backup      备份数据库"
-    Write-Host "  restore     恢复数据库 (需要: .\deploy.ps1 restore <file>)"
-    Write-Host "  clean       清理所有 Docker 资源"
-    Write-Host "  help        显示此帮助信息"
-    Write-Host "`n示例:"
-    Write-Host "  .\deploy.ps1 build"
-    Write-Host "  .\deploy.ps1 start"
-    Write-Host "  .\deploy.ps1 logs backend"
-}
+    # 回滚镜像
+    if ($BackupDir) {
+        try {
+            docker tag "deployment-backend:backup_$Timestamp" "deployment-backend:latest" 2>&1 | Out-Null
+            docker tag "deployment-frontend:backup_$Timestamp" "deployment-frontend:latest" 2>&1 | Out-Null
+            Write-Log "镜像已回滚"
+        } catch {
+            Write-Log "镜像回滚失败: $_" "WARN"
+        }
+    }
 
-# 主逻辑
-switch ($Command) {
-    "build"   { Build-Images }
-    "start"   { Start-Services }
-    "stop"    { Stop-Services }
-    "restart" { Restart-Services }
-    "status"  { Show-Status }
-    "logs"    { View-Logs }
-    "backup"  { Backup-Data }
-    "restore" { Restore-Data }
-    "clean"   { Clean-Resources }
-    "help"    { Show-Help }
-    default  { Show-Help }
+    # 重启容器
+    Push-Location $DeploymentDir
+    try {
+        Invoke-CommandWithLog "docker-compose up -d"
+    } finally {
+        Pop-Location
+    }
+
+    Write-Log "已回滚到提交: $CurrentCommit" "ERROR"
+    Write-Log "请检查日志: $LogFile" "ERROR"
+    exit 1
 }
