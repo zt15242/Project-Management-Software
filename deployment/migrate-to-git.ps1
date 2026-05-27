@@ -106,10 +106,15 @@ try {
             }
         }
 
+        # 定义备份运行脚本，如果命令失败捕获其退出码，而不是直接返回 stdout/stderr 导致 PowerShell 捕获为异常
         if ($MongoPass) {
-            docker exec mongo-1 mongodump -u $MongoUser -p $MongoPass --authenticationDatabase admin --out /tmp/backup_migrate 2>&1 | Out-Null
+            $dumpResult = docker exec mongo-1 mongodump -u $MongoUser -p $MongoPass --authenticationDatabase admin --out /tmp/backup_migrate 2>&1
         } else {
-            docker exec mongo-1 mongodump --out /tmp/backup_migrate 2>&1 | Out-Null
+            $dumpResult = docker exec mongo-1 mongodump --out /tmp/backup_migrate 2>&1
+        }
+        # 检查是否真的失败，根据 docker exec 的退出码判断
+        if ($LASTEXITCODE -ne 0) {
+            throw "mongodump 失败: $dumpResult"
         }
         docker cp "mongo-1:/tmp/backup_migrate" "$MongoBackupDir" 2>&1 | Out-Null
         docker exec mongo-1 rm -rf /tmp/backup_migrate 2>&1 | Out-Null
