@@ -9,7 +9,7 @@ param(
     [string]$GitRepo = "https://github.com/zt15242/Project-Management-Software.git",
     [string]$Branch = "main",
     [switch]$TestMode = $false,  # 测试模式：使用不同端口，不停止旧服务
-    [switch]$SkipMongoBackup = $false  # 是否跳过 MongoDB 备份
+    [switch]$SkipMongoBackup = $true  # 默认跳过 MongoDB 备份
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,50 +84,7 @@ try {
         Write-Host "  已备份: docker-compose.override.yml" -ForegroundColor Green
     }
     
-    # 备份 MongoDB（如果容器存在且没有跳过）
-    $MongoContainer = docker ps -a --filter "name=mongo-1" --format "{{.Names}}" 2>$null
-    if ($MongoContainer -eq "mongo-1" -and -not $SkipMongoBackup) {
-        Write-Host "  备份 MongoDB 数据..."
-        $MongoBackupDir = Join-Path $BackupDir "mongodb"
-        New-Item -ItemType Directory -Path $MongoBackupDir -Force | Out-Null
-        
-        # 尝试读取旧的部署配置文件中的用户名密码
-        $MongoUser = "admin"
-        $MongoPass = ""
-        $OldEnvPath = "$OldDir\deployment\.env"
-        if (Test-Path $OldEnvPath) {
-            $EnvContent = Get-Content $OldEnvPath
-            foreach ($Line in $EnvContent) {
-                if ($Line -match "^MONGO_INITDB_ROOT_USERNAME=(.*)$") {
-                    $MongoUser = $Matches[1].Trim()
-                }
-                if ($Line -match "^MONGO_INITDB_ROOT_PASSWORD=(.*)$") {
-                    $MongoPass = $Matches[1].Trim()
-                }
-            }
-        }
-
-        # 在调用可能写入 stderr 的命令前，临时将错误行为改为 Continue
-        $OldErrorAction = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        
-        try {
-            if ($MongoPass) {
-                $dumpResult = docker exec mongo-1 mongodump -u $MongoUser -p $MongoPass --authenticationDatabase admin --out /tmp/backup_migrate 2>&1
-            } else {
-                $dumpResult = docker exec mongo-1 mongodump --out /tmp/backup_migrate 2>&1
-            }
-            # 检查是否真的失败，根据 docker exec 的退出码判断
-            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne $null) {
-                throw "mongodump 失败: $dumpResult"
-            }
-        } finally {
-            $ErrorActionPreference = $OldErrorAction
-        }
-        docker cp "mongo-1:/tmp/backup_migrate" "$MongoBackupDir" 2>&1 | Out-Null
-        docker exec mongo-1 rm -rf /tmp/backup_migrate 2>&1 | Out-Null
-        Write-Host "  MongoDB 备份完成" -ForegroundColor Green
-    }
+    Write-Host "  跳过 MongoDB 备份" -ForegroundColor Yellow
     
     Write-Host "  备份完成" -ForegroundColor Green
 } catch {

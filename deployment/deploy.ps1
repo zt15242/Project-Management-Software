@@ -129,21 +129,7 @@ if (-not $SkipBackup) {
         Write-Log "  镜像备份失败（首次部署可忽略）: $_" "WARN"
     }
 
-    # 备份 MongoDB（如果 mongo-1 容器存在）
-    $MongoContainer = docker ps -a --filter "name=mongo-1" --format "{{.Names}}" 2>$null
-    if ($MongoContainer -eq "mongo-1") {
-        Write-Log "备份 MongoDB 数据..."
-        try {
-            $MongoBackupDir = Join-Path $BackupDir "mongodb"
-            New-Item -ItemType Directory -Path $MongoBackupDir -Force | Out-Null
-            docker exec mongo-1 mongodump --out /tmp/backup_$Timestamp 2>&1 | Out-Null
-            docker cp "mongo-1:/tmp/backup_$Timestamp" "$MongoBackupDir" 2>&1 | Out-Null
-            docker exec mongo-1 rm -rf "/tmp/backup_$Timestamp" 2>&1 | Out-Null
-            Write-Log "  MongoDB 备份完成"
-        } catch {
-            Write-Log "  MongoDB 备份失败: $_" "WARN"
-        }
-    }
+    Write-Log "跳过 MongoDB 备份"
 
     Write-Log "备份位置: $BackupDir"
 } else {
