@@ -14,7 +14,7 @@ import os
 import traceback
 
 from database import connect_to_mongo, close_mongo_connection
-from routers import auth, users, projects, tasks, topics, statistics, notifications, bi, deployments, ai_config, environments, health, knowledge, meetings, daily_reports, background_tasks, config, ppt_service, ppt_templates, ppt_template_upload, landppt_chat, email_config
+from routers import auth, users, projects, tasks, topics, statistics, notifications, bi, deployments, ai_config, environments, health, knowledge, meetings, daily_reports, background_tasks, config, ppt_service, ppt_templates, ppt_template_upload, landppt_chat, email_config, system
 from config import settings
 from services.environment_refresh_service import get_refresh_service
 
@@ -61,6 +61,7 @@ if os.path.exists(settings.UPLOAD_DIR):
 
 # 注册路由
 app.include_router(health.router, prefix="/api", tags=["健康检查"])
+app.include_router(system.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(projects.router)

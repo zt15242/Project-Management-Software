@@ -208,3 +208,10 @@ export const emailConfigAPI = {
   getStatus: () => axios.get('/email-config/status'),
   sendCode: (data) => axios.post('/email-config/send-code', data)
 }
+
+// 系统版本/更新相关
+export const systemAPI = {
+  getVersion: () => axios.get('/system/version'),
+  update: () => axios.post('/system/update', {}, { timeout: 300000 }),
+  restart: () => axios.post('/system/restart')
+}

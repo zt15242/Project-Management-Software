@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # 基础工具
     curl \
     wget \
+    git \
     gnupg \
     ca-certificates \
     # FFmpeg (替代 static_ffmpeg，避免从 GitHub 下载)
@@ -205,6 +206,11 @@ EXPOSE 8000
 # 健康检查脚本
 RUN echo '#!/bin/sh\ncurl -f http://localhost:8000/api/health || exit 1' > /healthcheck.sh && \
     chmod +x /healthcheck.sh
+
+ARG APP_COMMIT=unknown
+ARG APP_VERSION=v1.0.0
+ENV APP_COMMIT=$APP_COMMIT \
+    APP_VERSION=$APP_VERSION
 
 # 启动应用
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

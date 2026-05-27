@@ -61,6 +61,10 @@
           <span>后台任务</span>
         </el-menu-item>
       </el-menu>
+      <div class="version-entry" @click="openVersionPopover">
+        <span class="version-text">{{ versionInfo.version || 'v0.0.0' }}</span>
+        <span :class="['version-dot', versionStatusClass]"></span>
+      </div>
     </el-aside>
 
     <el-container>
@@ -147,6 +151,44 @@
         </div>
       </el-scrollbar>
     </el-drawer>
+
+    <el-dialog v-model="versionDialog" title="当前版本" width="320px" class="version-dialog">
+      <div class="version-panel">
+        <div class="version-number">{{ versionInfo.version || 'v0.0.0' }}</div>
+        <div class="version-state">{{ versionStatusText }}</div>
+        <div class="version-meta" v-if="versionInfo.remote_version && versionInfo.remote_version !== versionInfo.version">
+          最新版本: {{ versionInfo.remote_version }}
+        </div>
+        <div class="version-meta" v-if="versionInfo.local_commit">
+          当前代码: {{ versionInfo.local_commit }}
+        </div>
+        <div class="version-meta" v-if="versionInfo.remote_commit">
+          远端版本: {{ versionInfo.remote_commit }}
+        </div>
+        <div class="version-actions">
+          <el-button :icon="Refresh" circle @click="fetchVersion" :loading="versionLoading" />
+          <el-button
+            v-if="versionInfo.has_update && versionInfo.can_update && userStore.isAdmin"
+            type="primary"
+            @click="handleUpdate"
+            :loading="updating"
+          >
+            更新代码
+          </el-button>
+          <div v-else-if="versionInfo.has_update" class="version-hint">
+            有新版本，请在服务器执行部署脚本更新
+          </div>
+          <el-button
+            v-if="userStore.isAdmin"
+            type="success"
+            @click="handleRestart"
+            :loading="restarting"
+          >
+            立即重启
+          </el-button>
+        </div>
+      </div>
+    </el-dialog>
   </el-container>
 </template>
 
@@ -155,9 +197,11 @@ import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useUserStore } from "@/stores/user";
 import { useNotificationStore } from "@/stores/notification";
+import { systemAPI } from "@/api";
 import {
   Bell,
   Delete,
+  Refresh,
   UserFilled,
   DataAnalysis,
   Folder,
@@ -172,6 +216,7 @@ import {
   Microphone,
   Postcard,
 } from "@element-plus/icons-vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import "dayjs/locale/zh-cn";
@@ -185,6 +230,11 @@ const userStore = useUserStore();
 const notificationStore = useNotificationStore();
 
 const notificationDrawer = ref(false);
+const versionDialog = ref(false);
+const versionLoading = ref(false);
+const updating = ref(false);
+const restarting = ref(false);
+const versionInfo = ref({});
 
 const activeMenu = computed(() => route.path);
 
@@ -221,8 +271,58 @@ const formatTime = (time) => {
   return dayjs(time).fromNow();
 };
 
+const versionStatusText = computed(() => {
+  if (versionInfo.value.status === "update_available") return "发现新版本";
+  if (versionInfo.value.status === "restart_required") return "已更新，等待重启";
+  return "已是最新版本";
+});
+
+const versionStatusClass = computed(() => {
+  if (versionInfo.value.status === "update_available") return "warning";
+  if (versionInfo.value.status === "restart_required") return "pending";
+  return "success";
+});
+
+const fetchVersion = async () => {
+  versionLoading.value = true;
+  try {
+    versionInfo.value = await systemAPI.getVersion();
+  } finally {
+    versionLoading.value = false;
+  }
+};
+
+const openVersionPopover = () => {
+  versionDialog.value = true;
+  fetchVersion();
+};
+
+const handleUpdate = async () => {
+  updating.value = true;
+  try {
+    await systemAPI.update();
+    ElMessage.success("更新任务已启动，请稍后刷新状态");
+  } finally {
+    updating.value = false;
+  }
+};
+
+const handleRestart = async () => {
+  await ElMessageBox.confirm("后端将立即重启，页面可能短暂不可用。确认继续？", "立即重启", {
+    type: "warning",
+  });
+  restarting.value = true;
+  try {
+    await systemAPI.restart();
+    ElMessage.success("重启已触发，请稍后刷新页面");
+  } finally {
+    restarting.value = false;
+  }
+};
+
 onMounted(() => {
   notificationStore.startPolling();
+  fetchVersion();
 });
 
 onUnmounted(() => {
@@ -238,6 +338,13 @@ onUnmounted(() => {
 .sidebar {
   background-color: #304156;
   overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar :deep(.el-menu) {
+  flex: 1;
+  border-right: none;
 }
 
 .logo {
@@ -252,6 +359,83 @@ onUnmounted(() => {
 .logo h2 {
   font-size: 18px;
   font-weight: 600;
+}
+
+.version-entry {
+  margin: auto 10px 8px;
+  height: 34px;
+  border: 2px solid rgba(255, 95, 95, 0.85);
+  border-radius: 3px;
+  color: #d7e3f1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.version-entry:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #ff6b6b;
+}
+
+.version-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.version-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #67c23a;
+}
+
+.version-dot.warning {
+  background: #e6a23c;
+}
+
+.version-dot.pending {
+  background: #409eff;
+}
+
+.version-panel {
+  text-align: center;
+}
+
+.version-number {
+  font-size: 30px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 8px;
+}
+
+.version-state {
+  color: #67c23a;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.version-meta {
+  color: #8a95a6;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.version-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.version-hint {
+  color: #e6a23c;
+  font-size: 12px;
+  max-width: 180px;
+  line-height: 18px;
 }
 
 .header {

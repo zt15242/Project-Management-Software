@@ -31,6 +31,9 @@ COPY . .
 # 构建生产版本
 RUN npm run build
 
+ARG APP_COMMIT=unknown
+ARG APP_VERSION=v1.0.0
+
 # 第二阶段：使用 Nginx 提供静态文件服务
 FROM nginx:1.25-alpine
 

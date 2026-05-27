@@ -63,6 +63,44 @@ function Invoke-CommandWithLog {
     }
 }
 
+function Save-LocalEnvFiles {
+    param([string]$Root, [string]$BackupDir)
+    $EnvBackupDir = Join-Path $BackupDir "env_files"
+    New-Item -ItemType Directory -Path $EnvBackupDir -Force | Out-Null
+
+    foreach ($RelativePath in @("backend\.env", "deployment\.env", "deployment\docker-compose.override.yml")) {
+        $Source = Join-Path $Root $RelativePath
+        if (Test-Path $Source) {
+            $Target = Join-Path $EnvBackupDir ($RelativePath -replace '[\\/]', '__')
+            Copy-Item $Source $Target -Force
+            Write-Log "  已保护本地配置: $RelativePath"
+        }
+    }
+    return $EnvBackupDir
+}
+
+function Restore-LocalEnvFiles {
+    param([string]$Root, [string]$EnvBackupDir)
+    if (-not $EnvBackupDir -or -not (Test-Path $EnvBackupDir)) {
+        return
+    }
+
+    $Map = @{
+        "backend__.env" = "backend\.env"
+        "deployment__.env" = "deployment\.env"
+        "deployment__docker-compose.override.yml" = "deployment\docker-compose.override.yml"
+    }
+
+    foreach ($Item in $Map.GetEnumerator()) {
+        $Source = Join-Path $EnvBackupDir $Item.Key
+        if (Test-Path $Source) {
+            $Target = Join-Path $Root $Item.Value
+            Copy-Item $Source $Target -Force
+            Write-Log "  已恢复本地配置: $($Item.Value)"
+        }
+    }
+}
+
 # ============== 准备工作 ==============
 # 创建必要目录
 foreach ($Dir in @($BackupRoot, $LogDir)) {
@@ -108,6 +146,7 @@ try {
 
 # ============== 2. 备份 ==============
 $BackupDir = $null
+$EnvBackupDir = $null
 if (-not $SkipBackup) {
     Write-Log "------------------------------------------------------------"
     Write-Log "[1/6] 备份当前版本"
@@ -115,6 +154,7 @@ if (-not $SkipBackup) {
 
     $BackupDir = Join-Path $BackupRoot "backup_$Timestamp"
     New-Item -ItemType Directory -Path $BackupDir -Force | Out-Null
+    $EnvBackupDir = Save-LocalEnvFiles -Root $ProjectRoot -BackupDir $BackupDir
 
     # 备份提交哈希（用于回滚）
     $CurrentCommit | Out-File -FilePath (Join-Path $BackupDir "commit.txt") -Encoding UTF8
@@ -145,9 +185,15 @@ Push-Location $ProjectRoot
 try {
     Invoke-CommandWithLog "git fetch --all"
     Invoke-CommandWithLog "git reset --hard origin/$Branch"
+    Restore-LocalEnvFiles -Root $ProjectRoot -EnvBackupDir $EnvBackupDir
 
     $NewCommit = git rev-parse HEAD
+    $VersionFile = Join-Path $ProjectRoot "backend\VERSION"
+    $NewVersion = if (Test-Path $VersionFile) { (Get-Content $VersionFile -Raw).Trim() } else { "v1.0.0" }
+    $env:APP_COMMIT = $NewCommit
+    $env:APP_VERSION = $NewVersion
     Write-Log "最新提交: $NewCommit"
+    Write-Log "最新版本: $NewVersion"
 
     if ($CurrentCommit -eq $NewCommit) {
         Write-Log "代码无更新，跳过部署"

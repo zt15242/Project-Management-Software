@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     PORT: int = 8000
     BASE_URL: str = "http://localhost:8000"  # 服务器公网地址,用于生成临时公开URL
     FRONTEND_URL: str = "http://localhost:3000"  # 前端地址,用于生成邮件链接
+    PROJECT_ROOT: str = "/workspace"  # Git 项目根目录（Docker 中通过只读卷挂载）
+    SYSTEM_REPO_URL: str = "https://github.com/zt15242/Project-Management-Software.git"
+    SYSTEM_REPO_BRANCH: str = "main"
+    SYSTEM_UPDATE_COMMAND: Optional[str] = None  # 可选：服务器侧自动更新命令
+    APP_VERSION_FILE: str = "/app/VERSION"
     
     # BI数据源配置 - 配置系统支持的数据源类型
     # 只有在此列表中的数据源类型才会在前端显示
