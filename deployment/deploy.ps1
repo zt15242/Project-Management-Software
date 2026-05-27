@@ -239,6 +239,10 @@ $NeedRebuildFrontend = $false
 if ($ChangedFiles -match "backend[/\\]requirements\.txt|deployment[/\\]Dockerfile\.backend") {
     $NeedRebuildBackend = $true
 }
+if ($ChangedFiles -match "backend[/\\]VERSION") {
+    $NeedRebuildBackend = $true
+    $NeedRebuildFrontend = $true
+}
 # 后端代码是 bind mount，改 .py 文件不需要重建，但需要重启容器
 $BackendCodeChanged = $ChangedFiles -match "backend[/\\].*\.py|backend[/\\]VERSION"
 
