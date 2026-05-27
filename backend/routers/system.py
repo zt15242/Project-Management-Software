@@ -57,8 +57,14 @@ def _running_version() -> str:
 
 def _read_remote_version() -> Optional[str]:
     try:
+        repo_url = settings.SYSTEM_REPO_URL.rstrip("/")
+        if repo_url.endswith(".git"):
+            repo_url = repo_url[:-4]
+        if repo_url.startswith("https://github.com/"):
+            repo_url = repo_url.replace("https://github.com/", "https://raw.githubusercontent.com/", 1)
+
         raw_url = (
-            f"{settings.SYSTEM_REPO_URL.rstrip('/').replace('github.com/', 'raw.githubusercontent.com/')}"
+            f"{repo_url}"
             f"/{settings.SYSTEM_REPO_BRANCH}/backend/VERSION"
         )
         with urllib.request.urlopen(raw_url, timeout=10) as response:
@@ -86,7 +92,9 @@ async def get_version(_: UserResponse = Depends(get_current_admin_user)):
     if remote_commit:
         remote_hash = remote_commit.split()[0]
 
-    has_update = bool(remote_hash and local_commit and remote_hash != local_commit)
+    has_commit_update = bool(remote_hash and local_commit and remote_hash != local_commit)
+    has_version_update = bool(remote_version and remote_version != version)
+    has_update = has_commit_update or has_version_update
     restart_required = bool(local_commit and running_commit and local_commit != running_commit)
 
     if has_update:
