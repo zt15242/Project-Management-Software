@@ -166,6 +166,12 @@ if (Test-Path "$OldDir\backend\.env") {
     Write-Host "  已复制: backend\.env" -ForegroundColor Green
 }
 
+# 复制 deployment\.env（docker-compose 会从这里读取端口、MongoDB、OSS 等变量）
+if (Test-Path "$OldDir\deployment\.env") {
+    Copy-Item "$OldDir\deployment\.env" "$NewDir\deployment\.env" -Force
+    Write-Host "  已复制: deployment\.env" -ForegroundColor Green
+}
+
 # 复制 docker-compose.override.yml
 if (Test-Path "$OldDir\deployment\docker-compose.override.yml") {
     Copy-Item "$OldDir\deployment\docker-compose.override.yml" "$NewDir\deployment\docker-compose.override.yml" -Force
