@@ -61,7 +61,7 @@
           <span>后台任务</span>
         </el-menu-item>
       </el-menu>
-      <div class="version-entry" @click="openVersionPopover">
+      <div v-if="userStore.isAdmin" class="version-entry" @click="openVersionPopover">
         <span class="version-text">{{ versionInfo.version || 'v0.0.0' }}</span>
         <span :class="['version-dot', versionStatusClass]"></span>
       </div>

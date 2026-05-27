@@ -73,7 +73,7 @@ async def _exit_process_later(delay: float = 1.0):
 
 
 @router.get("/version")
-async def get_version(_: UserResponse = Depends(get_current_active_user)):
+async def get_version(_: UserResponse = Depends(get_current_admin_user)):
     local_commit = _run_git(["rev-parse", "HEAD"])
     running_commit = _running_commit() or local_commit
     branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"]) or settings.SYSTEM_REPO_BRANCH
