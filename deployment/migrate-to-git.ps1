@@ -129,6 +129,18 @@ if (Test-Path "$OldDir\deployment\.env") {
     Write-Host "  已复制: deployment\.env" -ForegroundColor Green
 }
 
+# 确保 compose 环境配置包含前端访问地址，用于邮件/通知链接
+$DeploymentEnvPath = "$NewDir\deployment\.env"
+if (Test-Path $DeploymentEnvPath) {
+    $EnvContent = Get-Content $DeploymentEnvPath
+    $HasFrontendUrl = $EnvContent | Where-Object { $_ -match '^FRONTEND_URL=' }
+    if (-not $HasFrontendUrl) {
+        $DefaultFrontendUrl = if ($TestMode) { "http://localhost:6014" } else { "http://localhost:6004" }
+        Add-Content -Path $DeploymentEnvPath -Value "FRONTEND_URL=$DefaultFrontendUrl" -Encoding UTF8
+        Write-Host "  已追加: FRONTEND_URL=$DefaultFrontendUrl" -ForegroundColor Yellow
+    }
+}
+
 # 复制 docker-compose.override.yml
 if (Test-Path "$OldDir\deployment\docker-compose.override.yml") {
     Copy-Item "$OldDir\deployment\docker-compose.override.yml" "$NewDir\deployment\docker-compose.override.yml" -Force

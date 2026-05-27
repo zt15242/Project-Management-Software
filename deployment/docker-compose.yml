@@ -20,6 +20,8 @@ services:
       - ALGORITHM=${ALGORITHM:-HS256}
       - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - BASE_URL=${BASE_URL:-http://localhost:8000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:${FRONTEND_PORT:-80}}
       - PROJECT_ROOT=/workspace
       - SYSTEM_REPO_URL=${SYSTEM_REPO_URL:-https://github.com/zt15242/Project-Management-Software.git}
       - SYSTEM_REPO_BRANCH=${SYSTEM_REPO_BRANCH:-main}
