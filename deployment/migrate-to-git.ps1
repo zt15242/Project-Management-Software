@@ -218,6 +218,9 @@ Write-Host "`n[6/8] 构建 Docker 镜像..." -ForegroundColor Yellow
 Push-Location "$NewDir\deployment"
 try {
     docker-compose build
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker-compose build failed with exit code $LASTEXITCODE"
+    }
     Write-Host "  镜像构建完成" -ForegroundColor Green
 } catch {
     Write-Host "  镜像构建失败: $_" -ForegroundColor Red
