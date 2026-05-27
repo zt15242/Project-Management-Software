@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, BackgroundTasks
 from typing import List, Optional
 from database import get_database
 from models import TopicCreate, TopicUpdate, TopicResponse, TopicStatus, TopicCommentCreate, TopicCommentResponse, UserResponse, UserRole
@@ -782,10 +782,54 @@ async def get_topic_comments(
     return result
 
 
+# 辅助函数：后台异步发送课题消息邮件
+def send_topic_comment_email_bg(email_config, recipient_email, topic_url, topic_number, topic_title, sender_name):
+    try:
+        subject = "您有一个新的课题消息，请及时查看"
+        content = f"""
+        <div style="padding: 20px; background-color: #f8fafc; font-family: 'Microsoft YaHei', sans-serif;">
+            <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                <h2 style="color: #1e293b; margin-bottom: 24px;">您有一个新的课题消息，请及时查看：</h2>
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                    <tr>
+                        <td style="padding: 12px 0; color: #64748b; width: 120px;">RequestNo 课题号</td>
+                        <td style="padding: 12px 0; color: #1e293b;">：</td>
+                        <td style="padding: 12px 0;">
+                            <a href="{topic_url}" style="color: #2563eb; text-decoration: none; font-weight: 600;">{topic_number}</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px 0; color: #64748b;">ProblemTitle 问题标题</td>
+                        <td style="padding: 12px 0; color: #1e293b;">：</td>
+                        <td style="padding: 12px 0; color: #1e293b;">{topic_title}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px 0; color: #64748b;">FromUser 发送自</td>
+                        <td style="padding: 12px 0; color: #1e293b;">：</td>
+                        <td style="padding: 12px 0; color: #1e293b;">{sender_name}</td>
+                    </tr>
+                </table>
+                <div style="background-color: #fef2f2; padding: 15px; border-radius: 8px; margin-top: 20px;">
+                    <p style="color: #dc2626; margin: 0; font-size: 14px;">
+                        <strong>注意：</strong>本邮件为系统自动发布，请勿回复
+                    </p>
+                </div>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0;">
+                <p style="color: #94a3b8; font-size: 12px; text-align: center;">项目管理系统 - 智能办公专家</p>
+            </div>
+        </div>
+        """
+        EmailService.send_email(email_config, recipient_email, subject, content)
+        print(f"[INFO] 课题新消息邮件已成功异步发送至: {recipient_email}")
+    except Exception as e:
+        print(f"[WARN] 异步发送课题新消息邮件失败: {str(e)}")
+
+
 @router.post("/{topic_id}/comments", response_model=TopicCommentResponse, status_code=status.HTTP_201_CREATED)
 async def create_topic_comment(
     topic_id: str,
     comment: TopicCommentCreate,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_active_user)
 ):
     """添加课题评论"""
@@ -817,11 +861,24 @@ async def create_topic_comment(
     
     # 通知相关人员（创建者和负责人）
     notify_users = set()
+    
+    # 正常逻辑：只发给他人
     if topic.get("created_by") and topic["created_by"] != current_user.id:
         notify_users.add(topic["created_by"])
     if topic.get("assigned_to") and topic["assigned_to"] != current_user.id:
         notify_users.add(topic["assigned_to"])
+            
+    print(f"[DEBUG] 发表评论，准备通知的用户ID列表: {list(notify_users)}")
     
+    # 获取邮件配置
+    email_config = None
+    try:
+        email_config = await EmailService.get_config()
+        if not email_config:
+            print("[WARN] 数据库中没有启用(is_enabled=True)的邮件配置")
+    except Exception as e:
+        print(f"[WARN] 获取邮件配置异常: {str(e)}")
+
     for user_id in notify_users:
         notification = {
             "user_id": user_id,
@@ -834,6 +891,33 @@ async def create_topic_comment(
             "created_at": get_beijing_time()
         }
         await db.notifications.insert_one(notification)
+        
+        # 异步发送邮件提醒
+        if email_config:
+            try:
+                # 获取接收人邮箱信息
+                recipient = await db.users.find_one({"_id": ObjectId(user_id)})
+                if recipient and recipient.get("email"):
+                    # 生成课题详情链接
+                    topic_url = f"{settings.FRONTEND_URL}/topics/{topic_id}"
+                    topic_number = topic.get('topic_number', '')
+                    topic_title = topic.get('title', '')
+                    sender_name = current_user.full_name
+                    
+                    print(f"[DEBUG] 将邮件任务加入后台: 发送至 {recipient['email']}")
+                    background_tasks.add_task(
+                        send_topic_comment_email_bg,
+                        email_config,
+                        recipient["email"],
+                        topic_url,
+                        topic_number,
+                        topic_title,
+                        sender_name
+                    )
+                else:
+                    print(f"[WARN] 接收人 {user_id} 没有配置邮箱信息")
+            except Exception as mail_err:
+                print(f"[WARN] 准备发送邮件提醒时出错: {str(mail_err)}")
     
     return TopicCommentResponse(
         id=str(created_comment["_id"]),
