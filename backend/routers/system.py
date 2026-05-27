@@ -52,9 +52,6 @@ def _running_commit() -> Optional[str]:
 
 
 def _running_version() -> str:
-    version = os.getenv("APP_VERSION")
-    if version:
-        return version
     return _read_version()
 
 
