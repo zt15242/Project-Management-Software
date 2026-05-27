@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.3 - 2026-05-27
+
+- Verified remote version detection by bumping the release version.
+- Improved reliability for reading GitHub remote `backend/VERSION`.
+
 ## v1.0.2 - 2026-05-27
 
 - Added the sidebar version panel for system administrators.
