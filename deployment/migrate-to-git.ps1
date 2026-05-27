@@ -8,7 +8,8 @@ param(
     [string]$NewDir = "D:\project-git",
     [string]$GitRepo = "https://github.com/zt15242/Project-Management-Software.git",
     [string]$Branch = "main",
-    [switch]$TestMode = $false  # 测试模式：使用不同端口，不停止旧服务
+    [switch]$TestMode = $false,  # 测试模式：使用不同端口，不停止旧服务
+    [switch]$SkipMongoBackup = $false  # 是否跳过 MongoDB 备份
 )
 
 $ErrorActionPreference = "Stop"
@@ -83,9 +84,9 @@ try {
         Write-Host "  已备份: docker-compose.override.yml" -ForegroundColor Green
     }
     
-    # 备份 MongoDB（如果容器存在）
+    # 备份 MongoDB（如果容器存在且没有跳过）
     $MongoContainer = docker ps -a --filter "name=mongo-1" --format "{{.Names}}" 2>$null
-    if ($MongoContainer -eq "mongo-1") {
+    if ($MongoContainer -eq "mongo-1" -and -not $SkipMongoBackup) {
         Write-Host "  备份 MongoDB 数据..."
         $MongoBackupDir = Join-Path $BackupDir "mongodb"
         New-Item -ItemType Directory -Path $MongoBackupDir -Force | Out-Null
