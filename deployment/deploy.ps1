@@ -51,6 +51,8 @@ function Invoke-CommandWithLog {
     param([string]$Command, [string]$WorkDir = $PWD)
     Write-Log "执行: $Command (工作目录: $WorkDir)"
     Push-Location $WorkDir
+    $OldErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
         $Output = Invoke-Expression $Command 2>&1
         $Output | ForEach-Object { Write-Log "  $_" }
@@ -59,6 +61,7 @@ function Invoke-CommandWithLog {
         }
         return $Output
     } finally {
+        $ErrorActionPreference = $OldErrorAction
         Pop-Location
     }
 }
