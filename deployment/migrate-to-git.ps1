@@ -89,7 +89,28 @@ try {
         Write-Host "  备份 MongoDB 数据..."
         $MongoBackupDir = Join-Path $BackupDir "mongodb"
         New-Item -ItemType Directory -Path $MongoBackupDir -Force | Out-Null
-        docker exec mongo-1 mongodump --out /tmp/backup_migrate 2>&1 | Out-Null
+        
+        # 尝试读取旧的部署配置文件中的用户名密码
+        $MongoUser = "admin"
+        $MongoPass = ""
+        $OldEnvPath = "$OldDir\deployment\.env"
+        if (Test-Path $OldEnvPath) {
+            $EnvContent = Get-Content $OldEnvPath
+            foreach ($Line in $EnvContent) {
+                if ($Line -match "^MONGO_INITDB_ROOT_USERNAME=(.*)$") {
+                    $MongoUser = $Matches[1].Trim()
+                }
+                if ($Line -match "^MONGO_INITDB_ROOT_PASSWORD=(.*)$") {
+                    $MongoPass = $Matches[1].Trim()
+                }
+            }
+        }
+
+        if ($MongoPass) {
+            docker exec mongo-1 mongodump -u $MongoUser -p $MongoPass --authenticationDatabase admin --out /tmp/backup_migrate 2>&1 | Out-Null
+        } else {
+            docker exec mongo-1 mongodump --out /tmp/backup_migrate 2>&1 | Out-Null
+        }
         docker cp "mongo-1:/tmp/backup_migrate" "$MongoBackupDir" 2>&1 | Out-Null
         docker exec mongo-1 rm -rf /tmp/backup_migrate 2>&1 | Out-Null
         Write-Host "  MongoDB 备份完成" -ForegroundColor Green
