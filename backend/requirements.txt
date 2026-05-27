@@ -28,6 +28,7 @@ PyPDF2==3.0.1  # PDF文档处理
 psutil==5.9.6
 oss2==2.18.4
 cos-python-sdk-v5==1.9.30
+apscheduler==3.10.4  # 定时任务调度器
 
 # LandPPT 模板渲染引擎
 Jinja2==3.1.2
