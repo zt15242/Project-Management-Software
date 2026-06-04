@@ -61,7 +61,7 @@ class EnvironmentRefreshService:
                     result = subprocess.run(
                         cmd,
                         capture_output=True,
-                        timeout=60,
+                        timeout=120,
                     )
                     
                     stdout = result.stdout.decode('utf-8', errors='ignore')
@@ -86,7 +86,7 @@ class EnvironmentRefreshService:
                     return {
                         "success": False,
                         "cookies": [],
-                        "message": "登录超时（60秒）"
+                        "message": "登录超时（120秒）"
                     }
                 except Exception as e:
                     return {
@@ -167,8 +167,8 @@ class EnvironmentRefreshService:
             
             print(f"[环境刷新] 找到 {len(environments)} 个激活的环境配置")
             
-            # 并发刷新所有环境（限制并发数为3，避免过多Selenium实例）
-            max_concurrent = 3
+            # Selenium/Chrome 在 Docker 中资源占用较高，串行刷新更稳定。
+            max_concurrent = 1
             for i in range(0, len(environments), max_concurrent):
                 batch = environments[i:i + max_concurrent]
                 tasks = [self.refresh_environment_login(env) for env in batch]

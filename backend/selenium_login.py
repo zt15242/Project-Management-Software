@@ -5,7 +5,9 @@ Selenium不依赖asyncio，完全避免Windows平台的事件循环问题
 import sys
 import json
 import os
+import shutil
 import time
+import tempfile
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -21,6 +23,7 @@ def auto_login(url: str, username: str, password: str, env_name: str) -> dict:
     支持跨平台（Windows/Linux/Mac）
     """
     driver = None
+    user_data_dir = tempfile.mkdtemp(prefix="pm_chrome_profile_")
     try:
         # 配置Chrome选项
         chrome_options = Options()
@@ -29,10 +32,11 @@ def auto_login(url: str, username: str, password: str, env_name: str) -> dict:
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument(f'--user-data-dir={user_data_dir}')
         
         # Docker/Linux 环境需要额外的参数
         chrome_options.add_argument('--disable-setuid-sandbox')
-        chrome_options.add_argument('--remote-debugging-port=9222')
+        chrome_options.add_argument('--remote-debugging-port=0')
         
         # 获取脚本所在目录
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -417,6 +421,7 @@ def auto_login(url: str, username: str, password: str, env_name: str) -> dict:
     finally:
         if driver:
             driver.quit()
+        shutil.rmtree(user_data_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

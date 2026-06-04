@@ -57,7 +57,7 @@ async def auto_login_environment(url: str, username: str, password: str, env_nam
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
-                    timeout=60,  # 60秒超时
+                    timeout=120,  # 120秒超时
                     # 不指定encoding，使用bytes处理
                 )
                 
@@ -85,7 +85,7 @@ async def auto_login_environment(url: str, username: str, password: str, env_nam
                 return {
                     "success": False,
                     "cookies": [],
-                    "message": "登录超时（60秒）"
+                    "message": "登录超时（120秒）"
                 }
             except Exception as e:
                 return {
