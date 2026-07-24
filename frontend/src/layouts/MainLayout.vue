@@ -28,10 +28,6 @@
           <el-icon><Warning /></el-icon>
           <span>课题</span>
         </el-menu-item>
-        <el-menu-item index="/bi" v-if="!userStore.isExternal">
-          <el-icon><TrendCharts /></el-icon>
-          <span>BI分析</span>
-        </el-menu-item>
         <el-menu-item index="/deployments" v-if="!userStore.isExternal">
           <el-icon><Upload /></el-icon>
           <span>代码发布</span>

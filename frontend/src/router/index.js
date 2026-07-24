@@ -69,16 +69,6 @@ const routes = [
         component: () => import('@/views/Profile.vue')
       },
       {
-        path: 'bi',
-        name: 'BI',
-        component: () => import('@/views/BI/index.vue')
-      },
-      {
-        path: 'bi/report-designer',
-        name: 'ReportDesigner',
-        component: () => import('@/views/BI/ReportDesigner.vue')
-      },
-      {
         path: 'deployments',
         name: 'Deployments',
         component: () => import('@/views/Deployments.vue')
