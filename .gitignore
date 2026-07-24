@@ -62,7 +62,6 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # 前端构建产物
-frontend/dist/
 frontend/.temp/
 frontend/.cache/
 
@@ -91,3 +90,4 @@ mongodb_data/
 
 # 其他
 .agent/
+!frontend/dist/
